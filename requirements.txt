@@ -1,0 +1,14 @@
+langchain>=1.4.0
+langchain-community>=0.4.0
+flask>=3.1.0
+sentence-transformers>=4.1.0
+pypdf>=5.6.0
+python-dotenv>=1.1.0
+langchain-qdrant>=1.1.0
+qdrant-client>=1.20.0
+langchain-groq>=1.1.0
+groq>=0.37.0
+langchain-openai>=0.3.0
+firebase-functions>=0.6.0
+gunicorn>=23.0.0
+-e .

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: medical-chatbot-api
+    runtime: python
+    plan: standard
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 300 app:app
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: FRONTEND_ORIGINS
+        value: https://chatbot-887c5.web.app,https://chatbot-887c5.firebaseapp.com
+      - key: GROQ_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false

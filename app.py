@@ -133,7 +133,7 @@ def chat():
     if rag_chain is not None:
         try:
             response = rag_chain.invoke({"input": msg})
-            print("Response : ", response["answer"])
+            print("Response generated successfully.")
             return str(response["answer"])
         except Exception as e:
             return f"Error executing query: {e}"

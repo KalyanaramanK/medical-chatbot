@@ -53,8 +53,9 @@ open up localhost:
 
 Firebase Hosting serves the static chat page, while Render runs the Flask API.
 This keeps Firebase on the Spark plan; do not deploy Cloud Functions for this
-setup. The Render Blueprint uses a Standard instance because the sentence
-transformer embedding model needs more memory than a free instance provides.
+setup. The Render Blueprint uses its free instance and a lightweight ONNX
+embedding runtime. Free Render services can sleep when idle and have limited
+memory and monthly runtime hours.
 
 1. Push this project to a GitHub repository. Do not commit `.env`; it is ignored.
 2. In Render, create a Blueprint from that repository and select `render.yaml`.

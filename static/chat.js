@@ -1,34 +1,62 @@
 $(document).ready(function() {
+	function appendMessage(text, isUser, time) {
+		const $row = $("<div>").addClass(
+			"d-flex mb-4 " + (isUser ? "justify-content-end" : "justify-content-start")
+		);
+		const $bubble = $("<div>").addClass(isUser ? "msg_cotainer_send" : "msg_cotainer");
+		const $timestamp = $("<span>")
+			.addClass(isUser ? "msg_time_send" : "msg_time")
+			.text(time);
+
+		$bubble.text(text).append($timestamp);
+		const $avatar = $("<img>")
+			.addClass("rounded-circle user_img_msg")
+			.attr("alt", isUser ? "You" : "Medical chatbot")
+			.attr(
+				"src",
+				isUser
+					? "https://i.ibb.co/d5b84Xw/Untitled-design.png"
+					: "https://cdn-icons-png.flaticon.com/512/387/387569.png"
+			);
+		$row.append(isUser ? $bubble : $("<div>").addClass("img_cont_msg").append($avatar));
+		if (isUser) {
+			$row.append($("<div>").addClass("img_cont_msg").append($avatar));
+		}
+		if (!isUser) {
+			$row.append($bubble);
+		}
+		$("#messageFormeight").append($row);
+	}
+
 	$("#messageArea").on("submit", function(event) {
 		event.preventDefault();
 
+		const rawText = String($("#text").val() || "").trim();
+		if (!rawText) {
+			return;
+		}
+
 		const date = new Date();
-		const strTime = date.getHours() + ":" + date.getMinutes();
-		const rawText = $("#text").val();
+		const strTime = date.getHours() + ":" + String(date.getMinutes()).padStart(2, "0");
 		const apiBaseUrl = (window.CHATBOT_API_BASE_URL || window.location.origin).replace(/\/+$/, "");
+		const $sendButton = $("#send").prop("disabled", true);
+		const $textInput = $("#text").prop("disabled", true);
 
-		const userHtml = '<div class="d-flex justify-content-end mb-4"><div class="msg_cotainer_send">' +
-			rawText + '<span class="msg_time_send">' + strTime + '</span></div>' +
-			'<div class="img_cont_msg"><img src="https://i.ibb.co/d5b84Xw/Untitled-design.png" ' +
-			'class="rounded-circle user_img_msg"></div></div>';
-
-		$("#text").val("");
-		$("#messageFormeight").append(userHtml);
+		appendMessage(rawText, true, strTime);
+		$textInput.val("");
 
 		$.ajax({
 			data: { msg: rawText },
 			type: "POST",
 			url: apiBaseUrl + "/get"
 		}).done(function(data) {
-			const botHtml = '<div class="d-flex justify-content-start mb-4">' +
-				'<div class="img_cont_msg"><img src="https://cdn-icons-png.flaticon.com/512/387/387569.png" ' +
-				'class="rounded-circle user_img_msg"></div><div class="msg_cotainer">' + data +
-				'<span class="msg_time">' + strTime + '</span></div></div>';
-			$("#messageFormeight").append($.parseHTML(botHtml));
-		}).fail(function() {
-			const errorHtml = '<div class="d-flex justify-content-start mb-4">' +
-				'<div class="msg_cotainer">Could not reach the chatbot service. Check the API URL and CORS configuration.</div></div>';
-			$("#messageFormeight").append(errorHtml);
+			appendMessage(String(data), false, strTime);
+		}).fail(function(xhr) {
+			const errorMessage = xhr.responseText || "Could not reach the chatbot service. Please try again later.";
+			appendMessage(errorMessage, false, strTime);
+		}).always(function() {
+			$sendButton.prop("disabled", false);
+			$textInput.prop("disabled", false).trigger("focus");
 		});
 	});
 });

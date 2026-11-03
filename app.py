@@ -1,4 +1,6 @@
-from flask import Flask, render_template, jsonify, request
+import logging
+import os
+from flask import Flask, Response, render_template, jsonify, request
 from src.helper import download_hugging_face_embeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
@@ -12,10 +14,12 @@ except ModuleNotFoundError:
     from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
-from src.prompt import *
-import os
+from src.prompt import system_prompt
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 8192
+MAX_QUESTION_LENGTH = 2000
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -42,22 +46,22 @@ init_error = None
 try:
     # 1. Initialize Qdrant Client (Cloud if URL provided, otherwise local disk)
     if QDRANT_URL:
-        print(f"Connecting to Qdrant Cloud at {QDRANT_URL}...")
+        logger.info("Connecting to Qdrant Cloud")
         qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
     else:
         qdrant_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qdrant_db")
         if os.path.exists(qdrant_path):
-            print(f"Loading local Qdrant database from: {qdrant_path}")
+            logger.info("Loading local Qdrant database")
             qdrant_client = QdrantClient(path=qdrant_path)
         else:
             qdrant_client = None
-            print("Notice: Local 'qdrant_db' directory does not exist yet. Run 'store_index.py' to generate it.")
+            logger.info("Local Qdrant database is not present")
 
     # 2. Initialize LLM (prefer Groq AI)
     chat_model = None
     llm_name = None
     if GROQ_API_KEY:
-        print(f"Initializing Groq AI ({GROQ_MODEL})...")
+        logger.info("Initializing Groq model")
         chat_model = ChatGroq(
             model=GROQ_MODEL,
             groq_api_key=GROQ_API_KEY,
@@ -65,11 +69,11 @@ try:
         )
         llm_name = f"Groq ({GROQ_MODEL})"
     elif OPENAI_API_KEY:
-        print("Initializing OpenAI (gpt-4o)...")
+        logger.info("Initializing OpenAI model")
         chat_model = ChatOpenAI(model="gpt-4o", api_key=OPENAI_API_KEY)
         llm_name = "OpenAI (gpt-4o)"
     else:
-        print("Notice: No GROQ_API_KEY or OPENAI_API_KEY found.")
+        logger.info("No supported model API key is configured")
 
     # 3. Assemble RAG pipeline if both Qdrant collection and LLM are ready
     if qdrant_client and qdrant_client.collection_exists(COLLECTION_NAME) and chat_model:
@@ -89,19 +93,19 @@ try:
         question_answer_chain = create_stuff_documents_chain(chat_model, prompt)
         rag_chain = create_retrieval_chain(retriever, question_answer_chain)
         init_status = f"Active ({llm_name} + Qdrant)"
-        print(f"RAG chain successfully activated with {init_status}!")
+        logger.info("RAG chain initialized")
     else:
         reasons = []
         if not chat_model:
-            reasons.append("Missing GROQ_API_KEY in .env")
+            reasons.append("No model API key configured")
         if not qdrant_client or not qdrant_client.collection_exists(COLLECTION_NAME):
             reasons.append("Qdrant collection not indexed yet (run store_index.py)")
         init_status = "Standby: " + ", ".join(reasons)
-        print(f"RAG in standby mode: {init_status}")
+        logger.info("RAG is in standby mode: %s", init_status)
 
-except Exception as e:
-    init_error = str(e)
-    print(f"Error during RAG initialization: {e}")
+except Exception as error:
+    init_error = type(error).__name__
+    logger.error("RAG initialization failed (%s)", init_error)
 
 
 @app.route("/")
@@ -111,7 +115,14 @@ def index():
 
 @app.route("/health")
 def health():
-    return jsonify(status="ok")
+    return jsonify(status="ok", rag_ready=rag_chain is not None)
+
+
+@app.route("/ready")
+def ready():
+    if rag_chain is None:
+        return jsonify(status="not_ready"), 503
+    return jsonify(status="ready")
 
 
 @app.after_request
@@ -125,30 +136,45 @@ def add_cors_headers(response):
     return response
 
 
-@app.route("/get", methods=["GET", "POST"])
+@app.errorhandler(413)
+def request_too_large(_error):
+    return Response("Request body is too large.", status=413, mimetype="text/plain")
+
+
+@app.route("/get", methods=["POST"])
 def chat():
-    msg = request.form.get("msg", "")
-    print(f"User Query: {msg}")
+    msg = request.form.get("msg", "").strip()
+    if not msg:
+        return Response("Please enter a question.", status=400, mimetype="text/plain")
+    if len(msg) > MAX_QUESTION_LENGTH:
+        return Response(
+            f"Questions must be {MAX_QUESTION_LENGTH} characters or fewer.",
+            status=400,
+            mimetype="text/plain",
+        )
 
     if rag_chain is not None:
         try:
             response = rag_chain.invoke({"input": msg})
-            print("Response generated successfully.")
-            return str(response["answer"])
-        except Exception as e:
-            return f"Error executing query: {e}"
+            answer = response.get("answer")
+            if not isinstance(answer, str) or not answer.strip():
+                raise ValueError("The model returned an empty answer")
+            return Response(answer, mimetype="text/plain")
+        except Exception as error:
+            logger.error("RAG request failed (%s)", type(error).__name__)
+            return Response(
+                "The chatbot could not complete this request. Please try again later.",
+                status=502,
+                mimetype="text/plain",
+            )
 
-    # Standby guidance message
-    return (
-        "<b>Medical Chatbot (Standby Mode)</b><br><br>"
-        "To enable live medical answers with Qdrant & Groq AI:<br>"
-        "1. Open <code>.env</code> and add your <code>GROQ_API_KEY</code> (get a free key at <a href='https://console.groq.com/keys' target='_blank'>console.groq.com</a>).<br>"
-        "2. Run <code>python store_index.py</code> to index the medical book into Qdrant.<br>"
-        "3. Restart the server.<br><br>"
-        f"<i>Current Status: {init_status}</i>"
-        + (f"<br><i>Details: {init_error}</i>" if init_error else "")
+    # Keep initialization details out of the public response.
+    return Response(
+        "The chatbot is not ready. Please try again later.",
+        status=503,
+        mimetype="text/plain",
     )
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080, debug=True, use_reloader=False)
+    app.run(host="0.0.0.0", port=8080, debug=False, use_reloader=False)
